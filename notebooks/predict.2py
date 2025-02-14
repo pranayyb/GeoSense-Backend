@@ -1,0 +1,386 @@
+# # # import os
+# # # import requests
+# # # import cv2
+# # # import torch
+# # # import numpy as np
+# # # import uvicorn
+# # # from fastapi import FastAPI, File, UploadFile, Form, Request
+# # # from fastapi.middleware.cors import CORSMiddleware
+# # # from fastapi.responses import JSONResponse
+# # # from segment_anything import sam_model_registry, SamPredictor
+# # # from pydantic import BaseModel
+# # # import supervision as sv
+# # # from io import BytesIO
+# # # from PIL import Image
+# # # import logging
+
+# # # app = FastAPI()
+
+# # # logging.basicConfig(level=logging.INFO)
+# # # logger = logging.getLogger(__name__)
+
+# # # device = torch.device("cuda:0" if torch.cuda.is_available() else "mps")
+
+# # # MODEL_TYPE = "vit_h"
+# # # CHECKPOINT_URL = "https://dl.fbaipublicfiles.com/segment_anything/sam_vit_h_4b8939.pth"
+
+# # # HOME = os.getcwd()
+# # # WEIGHTS_DIR = os.path.join(HOME, "weights")
+# # # CHECKPOINT_PATH = os.path.join(WEIGHTS_DIR, "sam_vit_h_4b8939.pth")
+
+# # # os.makedirs(WEIGHTS_DIR, exist_ok=True)
+
+
+# # # def download_checkpoint(url, save_path):
+
+# # #     if os.path.isfile(save_path):
+# # #         print("Checkpoint already exists.")
+# # #         return
+
+# # #     print("Downloading model checkpoint... This may take a few minutes.")
+# # #     response = requests.get(url, stream=True)
+
+# # #     if response.status_code == 200:
+# # #         with open(save_path, "wb") as f:
+# # #             for chunk in response.iter_content(chunk_size=8192):
+# # #                 f.write(chunk)
+# # #         print("Download complete!")
+# # #     else:
+# # #         raise RuntimeError(
+# # #             f"Failed to download checkpoint. HTTP Status: {response.status_code}"
+# # #         )
+
+
+# # # download_checkpoint(CHECKPOINT_URL, CHECKPOINT_PATH)
+
+# # # try:
+# # #     sam = sam_model_registry[MODEL_TYPE](checkpoint=CHECKPOINT_PATH).to(device=device)
+# # #     mask_predictor = SamPredictor(sam)
+# # #     print("Model loaded successfully!")
+# # # except Exception as e:
+# # #     raise RuntimeError(f"Error loading model: {e}")
+
+# # # app.add_middleware(
+# # #     CORSMiddleware,
+# # #     allow_origins=["*"],
+# # #     allow_credentials=True,
+# # #     allow_methods=["*"],
+# # #     allow_headers=["*"],
+# # # )
+
+
+# # # class BoundingBox(BaseModel):
+# # #     x1: int
+# # #     y1: int
+# # #     x2: int
+# # #     y2: int
+# # #     width: int
+# # #     height: int
+
+
+# # # @app.post("/segment/")
+# # # async def segment_image(
+# # #     file: UploadFile = File(...),
+# # #     x1: int = Form(...),
+# # #     y1: int = Form(...),
+# # #     x2: int = Form(...),
+# # #     y2: int = Form(...),
+# # #     width: int = Form(...),
+# # #     height: int = Form(...),
+# # # ):
+# # #     try:
+# # #         image_bytes = await file.read()
+# # #         image = Image.open(BytesIO(image_bytes)).convert("RGB")
+# # #         image_np = np.array(image)
+
+# # #         box = np.array([x1, y1, x2, y2])
+
+# # #         mask_predictor.set_image(image_np)
+# # #         masks, scores, logits = mask_predictor.predict(box=box, multimask_output=False)
+
+# # #         detections = sv.Detections(xyxy=sv.mask_to_xyxy(masks=masks), mask=masks)
+# # #         detections = detections[detections.area == np.max(detections.area)]
+# # #         mask = detections.mask[0]
+
+# # #         mask_area = np.sum(mask)
+# # #         mask_percentage = (mask_area / (mask.shape[0] * mask.shape[1])) * 100
+
+# # #         return {
+# # #             "mask_area": int(mask_area),
+# # #             "mask_percentage": round(mask_percentage, 4),
+# # #             "bbox": {
+# # #                 "x1": x1,
+# # #                 "y1": y1,
+# # #                 "x2": x2,
+# # #                 "y2": y2,
+# # #                 "width": width,
+# # #                 "height": height,
+# # #             },
+# # #         }
+# # #     except Exception as e:
+# # #         logger.error(f"Error processing segmentation: {e}")
+# # #         return JSONResponse(
+# # #             status_code=500, content={"message": "Segmentation failed", "error": str(e)}
+# # #         )
+
+
+# # # if __name__ == "__main__":
+# # #     uvicorn.run("predict:app", host="0.0.0.0", port=8000, reload=True)
+
+# import os
+# import requests
+# import cv2
+# import torch
+# import numpy as np
+# import uvicorn
+# import supervision as sv
+# import logging
+# from fastapi import FastAPI, File, UploadFile, Form
+# from fastapi.middleware.cors import CORSMiddleware
+# from fastapi.responses import JSONResponse, Response
+# from segment_anything import sam_model_registry, SamPredictor
+# from pydantic import BaseModel
+# from io import BytesIO
+# from PIL import Image
+
+# app = FastAPI()
+
+# logging.basicConfig(level=logging.INFO)
+# logger = logging.getLogger(__name__)
+
+# device = torch.device("cuda:0" if torch.cuda.is_available() else "mps")
+
+# MODEL_TYPE = "vit_h"
+# CHECKPOINT_URL = "https://dl.fbaipublicfiles.com/segment_anything/sam_vit_h_4b8939.pth"
+
+# HOME = os.getcwd()
+# WEIGHTS_DIR = os.path.join(HOME, "weights")
+# CHECKPOINT_PATH = os.path.join(WEIGHTS_DIR, "sam_vit_h_4b8939.pth")
+
+# os.makedirs(WEIGHTS_DIR, exist_ok=True)
+
+
+# def download_checkpoint(url, save_path):
+#     if os.path.isfile(save_path):
+#         print("Checkpoint already exists.")
+#         return
+
+#     print("Downloading model checkpoint... This may take a few minutes.")
+#     response = requests.get(url, stream=True)
+
+#     if response.status_code == 200:
+#         with open(save_path, "wb") as f:
+#             for chunk in response.iter_content(chunk_size=8192):
+#                 f.write(chunk)
+#         print("Download complete!")
+#     else:
+#         raise RuntimeError(
+#             f"Failed to download checkpoint. HTTP Status: {response.status_code}"
+#         )
+
+
+# download_checkpoint(CHECKPOINT_URL, CHECKPOINT_PATH)
+
+# try:
+#     sam = sam_model_registry[MODEL_TYPE](checkpoint=CHECKPOINT_PATH).to(device=device)
+#     mask_predictor = SamPredictor(sam)
+#     print("Model loaded successfully!")
+# except Exception as e:
+#     raise RuntimeError(f"Error loading model: {e}")
+
+# app.add_middleware(
+#     CORSMiddleware,
+#     allow_origins=["*"],
+#     allow_credentials=True,
+#     allow_methods=["*"],
+#     allow_headers=["*"],
+# )
+
+
+# class BoundingBox(BaseModel):
+#     x1: int
+#     y1: int
+#     x2: int
+#     y2: int
+#     width: int
+#     height: int
+
+
+# @app.post("/segment/")
+# async def segment_image(
+#     file: UploadFile = File(...),
+#     x1: int = Form(...),
+#     y1: int = Form(...),
+#     x2: int = Form(...),
+#     y2: int = Form(...),
+#     width: int = Form(...),
+#     height: int = Form(...),
+# ):
+#     try:
+#         image_bytes = await file.read()
+#         image = Image.open(BytesIO(image_bytes)).convert("RGB")
+#         image_np = np.array(image)
+
+#         box = np.array([x1, y1, x2, y2])
+
+#         mask_predictor.set_image(image_np)
+#         masks, scores, logits = mask_predictor.predict(box=box, multimask_output=False)
+
+#         detections = sv.Detections(xyxy=sv.mask_to_xyxy(masks=masks), mask=masks)
+#         detections = detections[detections.area == np.max(detections.area)]
+#         mask = detections.mask[0]
+
+#         mask_area = np.sum(mask)
+#         mask_percentage = (mask_area / (mask.shape[0] * mask.shape[1])) * 100
+
+#         colored_mask = np.zeros_like(image_np)
+#         colored_mask[mask] = [0, 255, 0]  # Green mask
+#         masked_image = cv2.addWeighted(image_np, 0.7, colored_mask, 0.3, 0)
+
+#         _, encoded_image = cv2.imencode(".png", masked_image)
+
+#         return Response(
+#             content=encoded_image.tobytes(),
+#             media_type="image/png",
+#             headers={
+#                 "X-Mask-Area": str(int(mask_area)),
+#                 "X-Mask-Percentage": str(round(mask_percentage, 4)),
+#             },
+#         )
+#     except Exception as e:
+#         logger.error(f"Error processing segmentation: {e}")
+#         return JSONResponse(
+#             status_code=500, content={"message": "Segmentation failed", "error": str(e)}
+#         )
+
+
+# if __name__ == "__main__":
+#     uvicorn.run("predict:app", host="0.0.0.0", port=8000, reload=True)
+
+import os
+import requests
+import cv2
+import torch
+import numpy as np
+import uvicorn
+import supervision as sv
+import logging
+from fastapi import FastAPI, File, UploadFile, Form
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
+from segment_anything import sam_model_registry, SamPredictor
+from pydantic import BaseModel
+from io import BytesIO
+from PIL import Image
+import xml.etree.ElementTree as ET
+
+app = FastAPI()
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+device = torch.device("cuda:0" if torch.cuda.is_available() else "mps")
+
+MODEL_TYPE = "vit_h"
+CHECKPOINT_URL = "https://dl.fbaipublicfiles.com/segment_anything/sam_vit_h_4b8939.pth"
+
+HOME = os.getcwd()
+WEIGHTS_DIR = os.path.join(HOME, "weights")
+CHECKPOINT_PATH = os.path.join(WEIGHTS_DIR, "sam_vit_h_4b8939.pth")
+
+os.makedirs(WEIGHTS_DIR, exist_ok=True)
+
+def download_checkpoint(url, save_path):
+    if os.path.isfile(save_path):
+        print("Checkpoint already exists.")
+        return
+
+    print("Downloading model checkpoint... This may take a few minutes.")
+    response = requests.get(url, stream=True)
+
+    if response.status_code == 200:
+        with open(save_path, "wb") as f:
+            for chunk in response.iter_content(chunk_size=8192):
+                f.write(chunk)
+        print("Download complete!")
+    else:
+        raise RuntimeError(f"Failed to download checkpoint. HTTP Status: {response.status_code}")
+
+download_checkpoint(CHECKPOINT_URL, CHECKPOINT_PATH)
+
+try:
+    sam = sam_model_registry[MODEL_TYPE](checkpoint=CHECKPOINT_PATH).to(device=device)
+    mask_predictor = SamPredictor(sam)
+    print("Model loaded successfully!")
+except Exception as e:
+    raise RuntimeError(f"Error loading model: {e}")
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+class BoundingBox(BaseModel):
+    x1: int
+    y1: int
+    x2: int
+    y2: int
+    width: int
+    height: int
+
+def mask_to_svg(mask):
+    """Convert a binary mask to an SVG path string."""
+    contours, _ = cv2.findContours(mask.astype(np.uint8), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    
+    svg_root = ET.Element("svg", xmlns="http://www.w3.org/2000/svg", width=str(mask.shape[1]), height=str(mask.shape[0]))
+    
+    for contour in contours:
+        if len(contour) > 2:  # Only consider valid contours
+            path_data = "M " + " ".join(f"{p[0][0]},{p[0][1]}" for p in contour) + " Z"
+            ET.SubElement(svg_root, "path", d=path_data, fill="green", stroke="black", stroke_width="2")
+
+    return ET.tostring(svg_root, encoding="unicode")
+
+@app.post("/segment/")
+async def segment_image(
+    file: UploadFile = File(...),
+    x1: int = Form(...),
+    y1: int = Form(...),
+    x2: int = Form(...),
+    y2: int = Form(...),
+    width: int = Form(...),
+    height: int = Form(...),
+):
+    try:
+        image_bytes = await file.read()
+        image = Image.open(BytesIO(image_bytes)).convert("RGB")
+        image_np = np.array(image)
+        
+        box = np.array([x1, y1, x2, y2])
+
+        mask_predictor.set_image(image_np)
+        masks, scores, logits = mask_predictor.predict(box=box, multimask_output=False)
+        
+        detections = sv.Detections(xyxy=sv.mask_to_xyxy(masks=masks), mask=masks)
+        detections = detections[detections.area == np.max(detections.area)]
+        mask = detections.mask[0]
+
+        mask_area = np.sum(mask)
+        mask_percentage = (mask_area / (mask.shape[0] * mask.shape[1])) * 100
+
+        svg_data = mask_to_svg(mask)
+
+        return {
+            "mask_area": int(mask_area),
+            "mask_percentage": round(mask_percentage, 4),
+            "svg": svg_data
+        }
+    except Exception as e:
+        logger.error(f"Error processing segmentation: {e}")
+        return JSONResponse(status_code=500, content={"message": "Segmentation failed", "error": str(e)})
+
+if __name__ == "__main__":
+    uvicorn.run("predict:app", host="0.0.0.0", port=8000, reload=True)
