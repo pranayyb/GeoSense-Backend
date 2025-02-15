@@ -1,0 +1,8 @@
+opencv-python
+torch
+torchvision
+fastapi
+uvicorn
+segment_anything
+supervision
+python-multipart
