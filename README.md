@@ -88,7 +88,7 @@ pip install -r requirements.txt
 ### Prediction Execution
 
 ```bash
-python predict.py
+python main.py
 ```
 
 Specify the input dataset file and designated output location for boundary predictions.
